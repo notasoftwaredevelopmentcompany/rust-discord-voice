@@ -1170,6 +1170,7 @@ dependencies = [
 name = "rust-discord-voice"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "serenity",
  "songbird",
  "tokio",

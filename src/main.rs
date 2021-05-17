@@ -1,4 +1,8 @@
 use std::env;
+use std::sync::Mutex;
+
+#[macro_use]
+extern crate lazy_static;
 
 use serenity::{
     async_trait,
@@ -30,6 +34,11 @@ use songbird::{
     Songbird,
 };
 
+// Global variables
+lazy_static! {
+    static ref USER_VOICE_DATA: Mutex<Vec<UserVoiceData>> = Mutex::new(Vec::new());
+}
+
 
 struct Handler;
 
@@ -41,17 +50,14 @@ impl EventHandler for Handler {
 }
 
 
-struct Receiver {
-    user_voice_data: Vec<UserVoiceData>
-}
+struct Receiver {}
 
 // let user_voice_data: &mut Vec<UserVoiceData> = &mut Vec::new();
 impl Receiver {
     pub fn new() -> Self {
         // You can manage state here, such as a buffer of audio packet bytes so
         // you can later store them in intervals.
-        let mut data: Vec<UserVoiceData> = Vec::new();
-        Self { user_voice_data: data }
+        Self { }
     }
 }
 
@@ -113,8 +119,9 @@ impl VoiceEventHandler for Receiver{
                         decoded_audio: Vec::new(),
                     };
 
+
+                    USER_VOICE_DATA.lock().unwrap().push(new_user_user_voice_data);
                     // (*self.user_voice_data).push(new_user_user_voice_data);
-                    (&self.user_voice_data).push(new_user_user_voice_data);
                     // println!("{:?}", self.user_voice_data);
                 }
             },
