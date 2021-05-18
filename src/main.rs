@@ -143,36 +143,36 @@ impl VoiceEventHandler for Receiver {
                         user_voice_data.push(new_user_user_voice_data);
                     }
                 } else {
-                    // @TODO: Reset the users Vector data
                     println!("*speaking == false");
-
-
+                    
+                    
                     // @TODO: save the users decoded_audio into a file?
                     let data_lock = {
                         // While data is a RwLock, it's recommended that you always open the lock as read.
                         // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
                         // readers to close.
                         let data_read = self.context.data.read().await;
-                
+                        
                         // Since the UserVoiceDataVector Value is wrapped in an Arc, cloning will not duplicate the
                         // data, instead the reference is cloned.
                         // We wap every value on in an Arc, as to keep the data lock open for the least time possible,
                         // to again, avoid deadlocking it.
                         data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone()    
                     };
-
-                    let mut decoded_audio_length: usize = 0;
-
-                    let user_voice_data = data_lock.read().await;
+                    
+                    let mut user_voice_data = data_lock.write().await;
                     
                     if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == *ssrc) {
-                        let entry = user_voice_data.get(index);
+                        let entry = user_voice_data.get_mut(index);
                         if let Some(user_entry) = entry {
+                            let mut decoded_audio_length: usize = user_entry.decoded_audio.len();
+                            println!("Their decoded_audio length was: {}", decoded_audio_length);
+                            user_entry.decoded_audio = Vec::new();
+
                             decoded_audio_length = user_entry.decoded_audio.len();
+                            println!("Their decoded_audio was reset to: {}", decoded_audio_length);
                         }
                     }
-
-                    println!("Their decoded_audio length was: {}", decoded_audio_length);
                 }
             },
             Ctx::VoicePacket {audio, packet, payload_offset, payload_end_pad} => {
