@@ -127,7 +127,7 @@ impl VoiceEventHandler for Receiver {
                         // readers to close.
                         let data_read = self.context.data.read().await;
                 
-                        // Since the CommandCounter Value is wrapped in an Arc, cloning will not duplicate the
+                        // Since the UserVoiceDataVector Value is wrapped in an Arc, cloning will not duplicate the
                         // data, instead the reference is cloned.
                         // We wap every value on in an Arc, as to keep the data lock open for the least time possible,
                         // to again, avoid deadlocking it.
@@ -145,20 +145,48 @@ impl VoiceEventHandler for Receiver {
                 } else {
                     // @TODO: Reset the users Vector data
                     println!("*speaking == false");
+
+
+                    // @TODO: save the users decoded_audio into a file?
+                    let data_lock = {
+                        // While data is a RwLock, it's recommended that you always open the lock as read.
+                        // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
+                        // readers to close.
+                        let data_read = self.context.data.read().await;
+                
+                        // Since the UserVoiceDataVector Value is wrapped in an Arc, cloning will not duplicate the
+                        // data, instead the reference is cloned.
+                        // We wap every value on in an Arc, as to keep the data lock open for the least time possible,
+                        // to again, avoid deadlocking it.
+                        data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone()    
+                    };
+
+                    let mut decoded_audio_length: usize = 0;
+
+                    let user_voice_data = data_lock.read().await;
+                    
+                    if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == *ssrc) {
+                        let entry = user_voice_data.get(index);
+                        if let Some(user_entry) = entry {
+                            decoded_audio_length = user_entry.decoded_audio.len();
+                        }
+                    }
+
+                    println!("Their decoded_audio length was: {}", decoded_audio_length);
                 }
             },
             Ctx::VoicePacket {audio, packet, payload_offset, payload_end_pad} => {
                 // An event which fires for every received audio packet,
                 // containing the decoded data.
                 if let Some(audio) = audio {
-                    println!("Audio packet's first 5 samples: {:?}", audio.get(..5.min(audio.len())));
+                    /* println!("Audio packet's first 5 samples: {:?}", audio.get(..5.min(audio.len())));
                     println!(
                         "Audio packet sequence {:05} has {:04} bytes (decompressed from {}), SSRC {}",
                         packet.sequence.0,
                         audio.len() * std::mem::size_of::<i16>(),
                         packet.payload.len(),
                         packet.ssrc,
-                    );
+                    ); */
 
                     let data_lock = {
                         // While data is a RwLock, it's recommended that you always open the lock as read.
@@ -173,14 +201,9 @@ impl VoiceEventHandler for Receiver {
                         data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone()
                     };
                 
-                    // Just like with client.data in main, we want to keep write locks open the least time
-                    // possible, so we wrap them on a block so they get automatically closed at the end.
                     {
-                        // The HashMap of CommandCounter is wrapped in an RwLock; since we want to write to it, we will
-                        // open the lock in write mode.
                         let mut user_voice_data = data_lock.write().await;
 
-                        // user_voice_data.push(new_user_user_voice_data);
                         if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == packet.ssrc) {
                             let entry = user_voice_data.get_mut(index);
     
