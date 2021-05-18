@@ -2,11 +2,15 @@ use lazy_static::__Deref;
 use serenity::prelude::TypeMap;
 use tokio::sync::{RwLock, RwLockWriteGuard};
 use serenity::prelude::TypeMapKey;
-use std::env;
+use std::{env, fs::File};
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::boxed::Box;
 use std::thread;
+use std::io::{Write, Result};
+
+use bincode;
+use serde;
 
 use serenity::{
     async_trait,
@@ -146,7 +150,6 @@ impl VoiceEventHandler for Receiver {
                     println!("*speaking == false");
                     
                     
-                    // @TODO: save the users decoded_audio into a file?
                     let data_lock = {
                         // While data is a RwLock, it's recommended that you always open the lock as read.
                         // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
@@ -165,6 +168,16 @@ impl VoiceEventHandler for Receiver {
                     if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == *ssrc) {
                         let entry = user_voice_data.get_mut(index);
                         if let Some(user_entry) = entry {
+                            // @TODO: save the users decoded_audio into a file?
+                            let mut f = File::create("output.ogg").expect("Unable to create ogg file");
+                            let decoded_audio = user_entry.decoded_audio.clone();
+
+                            for i in decoded_audio { 
+                                write!(f, "{}", i);
+                            }
+                            
+                            
+                            // Reset the users decoded_audio
                             let mut decoded_audio_length: usize = user_entry.decoded_audio.len();
                             println!("Their decoded_audio length was: {}", decoded_audio_length);
                             user_entry.decoded_audio = Vec::new();
