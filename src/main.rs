@@ -121,8 +121,7 @@ impl VoiceEventHandler for Receiver {
                         decoded_audio: Vec::<i16>::new(),
                     };
                     
-                    // @TODO: rename
-                    let counter_lock = {
+                    let data_lock = {
                         // While data is a RwLock, it's recommended that you always open the lock as read.
                         // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
                         // readers to close.
@@ -140,46 +139,12 @@ impl VoiceEventHandler for Receiver {
                     {
                         // The HashMap of CommandCounter is wrapped in an RwLock; since we want to write to it, we will
                         // open the lock in write mode.
-                        let mut counter = counter_lock.write().await;
-                
-                        // And we write the amount of times the command has been called to it.
-                        // let entry = counter.entry(command_name.to_string()).or_insert(0);
-                        // *entry += 1;
-
-                        counter.push(new_user_user_voice_data);
-
-                        // @NOTE: example of how to access a vector index -> decoded_audio
-                        /* if let Some(index) = counter.iter().position(|x| x.ssrc == *ssrc) {
-                            let entry = counter.get(index);
-
-                            if let Some(user_voice_data) = entry {
-                                // user_voice_data.decoded_audio.append(new_user_user_voice_data.);
-                            }
-                        } */
+                        let mut user_voice_data = data_lock.write().await;
+                        user_voice_data.push(new_user_user_voice_data);
                     }
-
-                    
                 } else {
                     // @TODO: Reset the users Vector data
                     println!("*speaking == false");
-                    
-                    // Since we only want to read the data and not write to it, we open it in read mode,
-                    // and since this is open in read mode, it means that there can be multiple locks open at
-                    // the same time, and as mentioned earlier, it's heavily recommended that you only open
-                    // the data lock in read mode, as it will avoid a lot of possible deadlocks.
-                    
-                    // let data_read = self.users_voice_data.read().await;
-
-                    // Then we obtain the value we need from data, in this case, we want the command counter.
-                    // The returned value from get() is an Arc, so the reference will be cloned, rather than
-                    // the data.
-                    // let user_voice_data_lock = data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone();
-
-                    // let user_voice_data_vector = user_voice_data_lock.read().await;
-
-                    /* for user in user_voice_data_vector.iter() {
-                        println!("The ssrc {} had {} audio packets stored when they stopped speaking", user.ssrc, user.decoded_audio.len());
-                    }; */
                 }
             },
             Ctx::VoicePacket {audio, packet, payload_offset, payload_end_pad} => {
@@ -195,20 +160,36 @@ impl VoiceEventHandler for Receiver {
                         packet.ssrc,
                     );
 
-                    /* let data_read = self.users_voice_data.read().await;
-                    let user_voice_data_lock = data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone();
-                    let user_voice_data_vector = user_voice_data_lock.read().await;
+                    let data_lock = {
+                        // While data is a RwLock, it's recommended that you always open the lock as read.
+                        // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
+                        // readers to close.
+                        let data_read = self.context.data.read().await;
+                
+                        // Since the CommandCounter Value is wrapped in an Arc, cloning will not duplicate the
+                        // data, instead the reference is cloned.
+                        // We wap every value on in an Arc, as to keep the data lock open for the least time possible,
+                        // to again, avoid deadlocking it.
+                        data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone()
+                    };
+                
+                    // Just like with client.data in main, we want to keep write locks open the least time
+                    // possible, so we wrap them on a block so they get automatically closed at the end.
+                    {
+                        // The HashMap of CommandCounter is wrapped in an RwLock; since we want to write to it, we will
+                        // open the lock in write mode.
+                        let mut user_voice_data = data_lock.write().await;
 
-                    let data_write = self.users_voice_data.write().await;
+                        // user_voice_data.push(new_user_user_voice_data);
+                        if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == packet.ssrc) {
+                            let entry = user_voice_data.get(index);
+    
+                            if let Some(user_entry) = entry {
+                                user_entry.decoded_audio.append(audio);
+                            }
+                        }
+                    }
 
-                    if let Some(index) = user_voice_data_vector.iter().position(|x| x.ssrc == packet.ssrc) {
-                        for elem in audio {
-                            // user_voice_data_lock.get_mut(index).unwrap().decoded_audio.push(*elem);
-                            // data_write
-                        };
-                    } else {
-                        println!("else");
-                    } */
                 } else {
                     println!("RTP packet, but no audio. Driver may not be configured to decode.");
                 }
