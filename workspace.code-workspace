@@ -6,6 +6,8 @@
     ],
     "settings": {
         "prettier.enable": false,
-        "telemetry.enableCrashReporter": false
+        "telemetry.enableCrashReporter": false,
+        "rust-analyzer.inlayHints.parameterHints": true,
+        "rust-analyzer.inlayHints.enable": false
     }
 }

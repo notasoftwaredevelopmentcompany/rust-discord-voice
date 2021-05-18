@@ -1,8 +1,12 @@
+use lazy_static::__Deref;
+use serenity::prelude::TypeMap;
+use tokio::sync::{RwLock, RwLockWriteGuard};
+use serenity::prelude::TypeMapKey;
 use std::env;
 use std::sync::Mutex;
-
-#[macro_use]
-extern crate lazy_static;
+use std::sync::Arc;
+use std::boxed::Box;
+use std::thread;
 
 use serenity::{
     async_trait,
@@ -34,11 +38,6 @@ use songbird::{
     Songbird,
 };
 
-// Global variables
-lazy_static! {
-    static ref USER_VOICE_DATA: Mutex<Vec<UserVoiceData>> = Mutex::new(Vec::new());
-}
-
 
 struct Handler;
 
@@ -50,14 +49,10 @@ impl EventHandler for Handler {
 }
 
 
-struct Receiver {}
-
-impl Receiver {
-    pub fn new() -> Self {
-        // You can manage state here, such as a buffer of audio packet bytes so
-        // you can later store them in intervals.
-        Self { }
-    }
+struct Receiver {
+    // user_voice_data: &'a mut Vec<UserVoiceData>,
+    // call_lock: Weak<Mutex<Call>>,
+    context: Context,
 }
 
 #[derive(Debug)]
@@ -67,13 +62,27 @@ struct UserVoiceData {
     decoded_audio: Vec<i16>
 }
 
+
+// A container type is created for inserting into the Client's `data`, which
+// allows for data to be accessible across all events and framework commands, or
+// anywhere else that has a copy of the `data` Arc.
+// These places are usually where either Context or Client is present.
+//
+// Documentation about TypeMap can be found here:
+// https://docs.rs/typemap_rev/0.1/typemap_rev/struct.TypeMap.html
+struct UserVoiceDataVector;
+
+impl TypeMapKey for UserVoiceDataVector {
+    type Value = Arc<RwLock<Vec<UserVoiceData>>>;
+}
+
+
+
 #[async_trait]
-impl VoiceEventHandler for Receiver{
+impl VoiceEventHandler for Receiver {
     #[allow(unused_variables)]
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
         use EventContext as Ctx;
-        // @TODO: testing to init UserVoiceData
-        // let mut user_voice_data: Vec<UserVoiceData> = Vec::new();
 
         match ctx {
             Ctx::SpeakingStateUpdate(
@@ -109,15 +118,68 @@ impl VoiceEventHandler for Receiver{
                 if *speaking == true {
                     let new_user_user_voice_data = UserVoiceData {
                         ssrc: *ssrc,
-                        decoded_audio: Vec::new(),
+                        decoded_audio: Vec::<i16>::new(),
                     };
+                    
+                    // @TODO: rename
+                    let counter_lock = {
+                        // While data is a RwLock, it's recommended that you always open the lock as read.
+                        // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
+                        // readers to close.
+                        let data_read = self.context.data.read().await;
+                
+                        // Since the CommandCounter Value is wrapped in an Arc, cloning will not duplicate the
+                        // data, instead the reference is cloned.
+                        // We wap every value on in an Arc, as to keep the data lock open for the least time possible,
+                        // to again, avoid deadlocking it.
+                        data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone()
+                    };
+                
+                    // Just like with client.data in main, we want to keep write locks open the least time
+                    // possible, so we wrap them on a block so they get automatically closed at the end.
+                    {
+                        // The HashMap of CommandCounter is wrapped in an RwLock; since we want to write to it, we will
+                        // open the lock in write mode.
+                        let mut counter = counter_lock.write().await;
+                
+                        // And we write the amount of times the command has been called to it.
+                        // let entry = counter.entry(command_name.to_string()).or_insert(0);
+                        // *entry += 1;
 
+                        counter.push(new_user_user_voice_data);
 
-                    USER_VOICE_DATA.lock().unwrap().push(new_user_user_voice_data);
-                    // (*self.user_voice_data).push(new_user_user_voice_data);
-                    // println!("{:?}", self.user_voice_data);
+                        // @NOTE: example of how to access a vector index -> decoded_audio
+                        /* if let Some(index) = counter.iter().position(|x| x.ssrc == *ssrc) {
+                            let entry = counter.get(index);
+
+                            if let Some(user_voice_data) = entry {
+                                // user_voice_data.decoded_audio.append(new_user_user_voice_data.);
+                            }
+                        } */
+                    }
+
+                    
                 } else {
                     // @TODO: Reset the users Vector data
+                    println!("*speaking == false");
+                    
+                    // Since we only want to read the data and not write to it, we open it in read mode,
+                    // and since this is open in read mode, it means that there can be multiple locks open at
+                    // the same time, and as mentioned earlier, it's heavily recommended that you only open
+                    // the data lock in read mode, as it will avoid a lot of possible deadlocks.
+                    
+                    // let data_read = self.users_voice_data.read().await;
+
+                    // Then we obtain the value we need from data, in this case, we want the command counter.
+                    // The returned value from get() is an Arc, so the reference will be cloned, rather than
+                    // the data.
+                    // let user_voice_data_lock = data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone();
+
+                    // let user_voice_data_vector = user_voice_data_lock.read().await;
+
+                    /* for user in user_voice_data_vector.iter() {
+                        println!("The ssrc {} had {} audio packets stored when they stopped speaking", user.ssrc, user.decoded_audio.len());
+                    }; */
                 }
             },
             Ctx::VoicePacket {audio, packet, payload_offset, payload_end_pad} => {
@@ -132,6 +194,21 @@ impl VoiceEventHandler for Receiver{
                         packet.payload.len(),
                         packet.ssrc,
                     );
+
+                    /* let data_read = self.users_voice_data.read().await;
+                    let user_voice_data_lock = data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone();
+                    let user_voice_data_vector = user_voice_data_lock.read().await;
+
+                    let data_write = self.users_voice_data.write().await;
+
+                    if let Some(index) = user_voice_data_vector.iter().position(|x| x.ssrc == packet.ssrc) {
+                        for elem in audio {
+                            // user_voice_data_lock.get_mut(index).unwrap().decoded_audio.push(*elem);
+                            // data_write
+                        };
+                    } else {
+                        println!("else");
+                    } */
                 } else {
                     println!("RTP packet, but no audio. Driver may not be configured to decode.");
                 }
@@ -164,10 +241,13 @@ impl VoiceEventHandler for Receiver{
 
                 println!("Client disconnected: user {:?}", user_id);
             },
-            _ => {
-                // We won't be registering this struct for any more event classes.
-                unimplemented!()
-            }
+            Ctx::Track(_) => {}
+            Ctx::DriverConnect => {}
+            Ctx::DriverReconnect => {}
+            Ctx::DriverConnectFailed => {}
+            Ctx::DriverReconnectFailed => {}
+            Ctx::SsrcKnown(_) => {}
+            _ => println!("something else"),
         }
 
         None
@@ -206,6 +286,26 @@ async fn main() {
         .register_songbird_with(songbird.into())
         .await
         .expect("Error creating client");
+    
+    // This is where we can initially insert the data we desire into the "global" data TypeMap.
+    // client.data is wrapped on a RwLock, and since we want to insert to it, we have to open it in
+    // write mode, but there's a small thing catch:
+    // There can only be a single writer to a given lock open in the entire application, this means
+    // you can't open a new write lock until the previous write lock has closed.
+    // This is not the case with read locks, read locks can be open indefinitely, BUT as soon as
+    // you need to open the lock in write mode, all the read locks must be closed.
+    //
+    // You can find more information about deadlocks in the Rust Book, ch16-03:
+    // https://doc.rust-lang.org/book/ch16-03-shared-state.html
+    //
+    // All of this means that we have to keep locks open for the least time possible, so we put
+    // them inside a block, so they get closed automatically when droped.
+    // If we don't do this, we would never be able to open the data lock anywhere else.
+    {
+        // Open the data lock in write mode, so keys can be inserted to it.
+        let mut data = client.data.write().await;
+        data.insert::<UserVoiceDataVector>(Arc::new(RwLock::new(Vec::<UserVoiceData>::new())));
+    }
 
     // start listening for events by starting a single shard
     if let Err(why) = client.start().await {
@@ -233,38 +333,57 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
     let (handler_lock, conn_result) = manager.join(guild_id, connect_to).await;
 
+
     if let Ok(_) = conn_result {
         // NOTE: this skips listening for the actual connection result.
         let mut handler = handler_lock.lock().await;
-
+        
+        let context_clone = ctx.clone();
         handler.add_global_event(
             CoreEvent::SpeakingStateUpdate.into(),
-            Receiver::new(),
+            Receiver {
+                context: context_clone
+            }
         );
 
+        let context_clone = ctx.clone();
         handler.add_global_event(
             CoreEvent::SpeakingUpdate.into(),
-            Receiver::new(),
+            Receiver {
+                context: context_clone
+            }
         );
 
+        let context_clone = ctx.clone();
         handler.add_global_event(
             CoreEvent::VoicePacket.into(),
-            Receiver::new(),
+            Receiver {
+                context: context_clone
+            }
         );
 
+        let context_clone = ctx.clone();
         handler.add_global_event(
             CoreEvent::RtcpPacket.into(),
-            Receiver::new(),
+            Receiver {
+                context: context_clone
+            }
         );
 
+        let context_clone = ctx.clone();
         handler.add_global_event(
             CoreEvent::ClientConnect.into(),
-            Receiver::new(),
+            Receiver {
+                context: context_clone
+            }
         );
 
+        let context_clone = ctx.clone();
         handler.add_global_event(
             CoreEvent::ClientDisconnect.into(),
-            Receiver::new(),
+            Receiver {
+                context: context_clone
+            }
         );
 
         check_msg(msg.channel_id.say(&ctx.http, &format!("Joined {}", connect_to.mention())).await);
