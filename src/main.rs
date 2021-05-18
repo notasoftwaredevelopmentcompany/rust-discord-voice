@@ -182,10 +182,12 @@ impl VoiceEventHandler for Receiver {
 
                         // user_voice_data.push(new_user_user_voice_data);
                         if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == packet.ssrc) {
-                            let entry = user_voice_data.get(index);
+                            let entry = user_voice_data.get_mut(index);
     
                             if let Some(user_entry) = entry {
-                                user_entry.decoded_audio.append(audio);
+                                for sample in audio {
+                                    user_entry.decoded_audio.push(*sample);
+                                }
                             }
                         }
                     }
