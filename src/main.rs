@@ -147,19 +147,8 @@ impl VoiceEventHandler for Receiver {
                         user_voice_data.push(new_user_user_voice_data);
                     }
                 } else {
-                    println!("*speaking == false");
-                    
-                    
                     let data_lock = {
-                        // While data is a RwLock, it's recommended that you always open the lock as read.
-                        // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
-                        // readers to close.
                         let data_read = self.context.data.read().await;
-                        
-                        // Since the UserVoiceDataVector Value is wrapped in an Arc, cloning will not duplicate the
-                        // data, instead the reference is cloned.
-                        // We wap every value on in an Arc, as to keep the data lock open for the least time possible,
-                        // to again, avoid deadlocking it.
                         data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone()    
                     };
                     
@@ -169,18 +158,28 @@ impl VoiceEventHandler for Receiver {
                         let entry = user_voice_data.get_mut(index);
                         if let Some(user_entry) = entry {
                             // @TODO: save the users decoded_audio into a file?
-                            let mut f = File::create("output.ogg").expect("Unable to create ogg file");
+                            let mut output_file = File::create("output.ogg").expect("Unable to create ogg file");
                             let decoded_audio = user_entry.decoded_audio.clone();
 
                             thread::spawn(move || {
                                 println!("[New thread]: writing decoded_audio to file");
                                 for i in decoded_audio { 
-                                    let result = write!(f, "{}", i);
+                                    // let result = write!(output_file, "{}", i.to_le_bytes());
+                                    let result = output_file.write_all(&i.to_le_bytes());
                                     match result {
                                         Ok(v) => (),
                                         Err(e) => println!("[New thread]: Error writing audio to file: {:?}", e),
                                     }
                                 }
+
+                                /* let reference = output_file.by_ref();
+                                let write_result = reference.write_all();
+
+                                match write_result {
+                                    Ok(v) => println!("[New thread]: File written successfully!"),
+                                    Err(e) => println!("[New thread]: Error Could not write to output file!")
+                                }; */
+
                                 println!("[New thread]: File written successfully!");
                             });
                             
@@ -205,19 +204,11 @@ impl VoiceEventHandler for Receiver {
                         packet.sequence.0,
                         audio.len() * std::mem::size_of::<i16>(),
                         packet.payload.len(),
-                        packet.ssrc,
+                        packet.ssrc
                     ); */
 
                     let data_lock = {
-                        // While data is a RwLock, it's recommended that you always open the lock as read.
-                        // This is mainly done to avoid Deadlocks for having a possible writer waiting for multiple
-                        // readers to close.
                         let data_read = self.context.data.read().await;
-                
-                        // Since the CommandCounter Value is wrapped in an Arc, cloning will not duplicate the
-                        // data, instead the reference is cloned.
-                        // We wap every value on in an Arc, as to keep the data lock open for the least time possible,
-                        // to again, avoid deadlocking it.
                         data_read.get::<UserVoiceDataVector>().expect("Expected UserVoiceDataVector in TypeMap.").clone()
                     };
                 
@@ -363,7 +354,7 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     if let Ok(_) = conn_result {
         // NOTE: this skips listening for the actual connection result.
         let mut handler = handler_lock.lock().await;
-        
+
         let context_clone = ctx.clone();
         handler.add_global_event(
             CoreEvent::SpeakingStateUpdate.into(),
