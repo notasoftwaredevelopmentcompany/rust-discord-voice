@@ -1,16 +1,11 @@
-use lazy_static::__Deref;
-use serenity::prelude::TypeMap;
-use tokio::sync::{RwLock, RwLockWriteGuard};
+use tokio::sync::{RwLock};
 use serenity::prelude::TypeMapKey;
-use std::{env, fs::File};
-use std::sync::Mutex;
+use std::{env, fs::File, io, process::Command};
 use std::sync::Arc;
 use std::boxed::Box;
 use std::thread;
-use std::io::{Write, Result};
-
-use bincode;
-use serde;
+use std::io::{Write};
+use uuid::Uuid;
 
 use serenity::{
     async_trait,
@@ -156,31 +151,47 @@ impl VoiceEventHandler for Receiver {
                     
                     if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == *ssrc) {
                         let entry = user_voice_data.get_mut(index);
-                        if let Some(user_entry) = entry {
-                            // @TODO: save the users decoded_audio into a file?
-                            let mut output_file = File::create("output.ogg").expect("Unable to create ogg file");
+                        if let Some(user_entry) = entry {                            
                             let decoded_audio = user_entry.decoded_audio.clone();
-
+                            
                             thread::spawn(move || {
-                                println!("[New thread]: writing decoded_audio to file");
-                                for i in decoded_audio { 
-                                    // let result = write!(output_file, "{}", i.to_le_bytes());
-                                    let result = output_file.write_all(&i.to_le_bytes());
-                                    match result {
-                                        Ok(v) => (),
-                                        Err(e) => println!("[New thread]: Error writing audio to file: {:?}", e),
+                                let uuid = format!("{}", Uuid::new_v4());
+                                let raw_file_name = format!("output_{}.opus", uuid);
+                                let output_file_name = format!("ogg_{}.ogg", uuid);
+                                
+                                {
+                                    let mut raw_output_file = File::create(raw_file_name).expect("Unable to create opus file");
+    
+                                    println!("[New thread]: writing decoded_audio to file");
+                                    for i in decoded_audio { 
+                                        let result = raw_output_file.write_all(&i.to_le_bytes());
+                                        match result {
+                                            Ok(v) => (),
+                                            Err(e) => println!("[New thread]: Error writing audio to file: {:?}", e),
+                                        }
                                     }
-                                }
 
-                                /* let reference = output_file.by_ref();
-                                let write_result = reference.write_all();
+                                    println!("[New thread]: File written successfully!");
+                                } // @NOTE: the raw_output_file (write only) file handle gets close at the end of this scope
 
-                                match write_result {
-                                    Ok(v) => println!("[New thread]: File written successfully!"),
-                                    Err(e) => println!("[New thread]: Error Could not write to output file!")
-                                }; */
+                                // Encoding the opus output file into ogg
+                                // Example: ffmpeg -f s16le -ar 48k -ac 2 -i output.opus output_test.ogg
+                                let output_of_ffmpeg = Command::new("ffmpeg")
+                                    .arg("-f")
+                                    .arg("s16le")
+                                    .arg("-ar")
+                                    .arg("48k")
+                                    .arg("-ac")
+                                    .arg("2")
+                                    .arg("-i")
+                                    .arg(format!("output_{}.opus", uuid))
+                                    .arg(output_file_name)
+                                    .output()
+                                    .expect("failed to execute process");
 
-                                println!("[New thread]: File written successfully!");
+                                println!("status: {}", output_of_ffmpeg.status);
+                                io::stdout().write_all(&output_of_ffmpeg.stdout).unwrap();
+                                io::stderr().write_all(&output_of_ffmpeg.stderr).unwrap();
                             });
                             
                             // Reset the users decoded_audio
