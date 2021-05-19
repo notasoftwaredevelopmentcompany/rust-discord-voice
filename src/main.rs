@@ -1,5 +1,5 @@
 use tokio::sync::{RwLock};
-use serenity::{model::id::GuildId, prelude::TypeMapKey};
+use serenity::{model::id::GuildId, prelude::{TypeMapKey}};
 use std::{env, fs::{self, File}, io, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::Duration};
 use std::sync::Arc;
 use std::boxed::Box;
@@ -72,21 +72,42 @@ impl EventHandler for Handler {
 
                     let guild_id = GuildId(339824391007502344);
 
-                    if let Some(handler_lock) = manager.get(guild_id) {
-                        let mut handler = handler_lock.lock().await;
 
-                        let audio_source = match ffmpeg("./ogg_bla_filetype_test_audio.ogg").await {
-                            Ok(audio_source) => audio_source,
-                            Err(why) => {
-                                println!("Err starting source: {:?}", why);
-                                return ();
-                            },
+                    // Read from the global data storage UserVoiceDataVector to see if there are any .ogg files to play?
+                    let data_lock = {
+                        let data_read = &ctx1.data.read().await;
+                        data_read.get::<OggAudioClipVector>().expect("Expected OggAudioClipVector in TypeMap.").clone()
+                    };
+                
+                    {
+                        let mut user_voice_data = data_lock.write().await;
+
+                        if let Some(first_item) = user_voice_data.first() {
+                            if let Some(handler_lock) = manager.get(guild_id) {
+                                let mut handler = handler_lock.lock().await;
+        
+                                // let audio_source = match ffmpeg("./ogg_bla_filetype_test_audio.ogg").await {
+
+                                // let first_copy = first_item.clone();
+                                let file_path = &first_item.file_path;
+                                let audio_source = match ffmpeg(file_path).await {
+                                    Ok(audio_source) => audio_source,
+                                    Err(why) => {
+                                        println!("Err starting source: {:?}", why);
+                                        return ();
+                                    },
+                                };
+        
+                                handler.play_source(audio_source);
+                            }
                         };
 
-                        handler.play_source(audio_source);
+                        // Remove the first vector item
+                        user_voice_data.remove(0);
+
                     }
 
-                    tokio::time::sleep(Duration::from_secs(1)).await;   
+                    tokio::time::sleep(Duration::from_secs(2)).await;   
                 }
             });
 
@@ -131,6 +152,17 @@ struct UserVoiceDataVector;
 
 impl TypeMapKey for UserVoiceDataVector {
     type Value = Arc<RwLock<Vec<UserVoiceData>>>;
+}
+
+
+struct OggAudioClip {
+    file_path: String,
+}
+
+struct OggAudioClipVector;
+
+impl TypeMapKey for OggAudioClipVector {
+    type Value = Arc<RwLock<Vec<OggAudioClip>>>;
 }
 
 
@@ -210,13 +242,13 @@ impl VoiceEventHandler for Receiver {
                     if let Some(index) = user_voice_data.iter().position(|x| x.ssrc == *ssrc) {
                         let entry = user_voice_data.get_mut(index);
                         if let Some(user_entry) = entry {                            
-                            let decoded_audio = user_entry.decoded_audio.clone();
+                            let decoded_audio: Vec<i16> = user_entry.decoded_audio.clone();
+                            let uuid: String = format!("{}", Uuid::new_v4());
+                            let uuid_copy = uuid.clone();
+                            let raw_file_name: String = format!("output_{}.opus", &uuid);
+                            let output_file_name: String = format!("ogg_{}.ogg", &uuid);
                             
                             thread::spawn(move || {
-                                let uuid = format!("{}", Uuid::new_v4());
-                                let raw_file_name = format!("output_{}.opus", uuid);
-                                let output_file_name = format!("ogg_{}.ogg", uuid);
-                                
                                 {
                                     let mut raw_output_file = File::create(raw_file_name).expect("Unable to create opus file");
     
@@ -242,7 +274,7 @@ impl VoiceEventHandler for Receiver {
                                     .arg("-ac")
                                     .arg("2")
                                     .arg("-i")
-                                    .arg(format!("output_{}.opus", uuid))
+                                    .arg(format!("output_{}.opus", &uuid))
                                     .arg(output_file_name)
                                     .output()
                                     .expect("failed to execute process");
@@ -252,12 +284,27 @@ impl VoiceEventHandler for Receiver {
                                 io::stderr().write_all(&output_of_ffmpeg.stderr).unwrap();
 
                                 // Delete the original raw opus file from disk
-                                let remove_file_result = fs::remove_file(format!("output_{}.opus", uuid));
+                                let remove_file_result = fs::remove_file(format!("output_{}.opus", &uuid));
                                 match remove_file_result {
-                                    Ok(v) => println!("The raw opus file: {} was successfully removed", format!("output_{}.opus", uuid)),
-                                    Err(e) => println!("Unable to remove the raw opus file: {}", format!("output_{}.opus", uuid)),
+                                    Ok(v) => println!("The raw opus file: {} was successfully removed", format!("output_{}.opus", &uuid)),
+                                    Err(e) => println!("Unable to remove the raw opus file: {}", format!("output_{}.opus", &uuid)),
                                 }
                             });
+
+                            // Add the output ogg file to the global data OggAudioClipVector
+                            let data_lock = {
+                                let data_read = self.context.data.read().await;
+                                data_read.get::<OggAudioClipVector>().expect("Expected OggAudioClipVector in TypeMap.").clone()
+                            };
+                        
+                            {
+                                let mut ogg_audio_clips = data_lock.write().await;
+                                let new_audio_clip = OggAudioClip {
+                                    file_path: format!("ogg_{}.ogg", uuid_copy),
+                                };
+
+                                ogg_audio_clips.push(new_audio_clip);
+                            }
                             
                             // Reset the users decoded_audio
                             let mut decoded_audio_length: usize = user_entry.decoded_audio.len();
@@ -400,6 +447,7 @@ async fn main() {
         // Open the data lock in write mode, so keys can be inserted to it.
         let mut data = client.data.write().await;
         data.insert::<UserVoiceDataVector>(Arc::new(RwLock::new(Vec::<UserVoiceData>::new())));
+        data.insert::<OggAudioClipVector>(Arc::new(RwLock::new(Vec::<OggAudioClip>::new())));
     }
 
     // start listening for events by starting a single shard
