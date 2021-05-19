@@ -1,6 +1,6 @@
 use tokio::sync::{RwLock};
-use serenity::prelude::TypeMapKey;
-use std::{env, fs::{self, File}, io, process::Command};
+use serenity::{model::id::GuildId, prelude::TypeMapKey};
+use std::{env, fs::{self, File}, io, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::Duration};
 use std::sync::Arc;
 use std::boxed::Box;
 use std::thread;
@@ -26,24 +26,82 @@ use serenity::{
     Result as SerenityResult,
 };
 
-use songbird::{
-    driver::{Config as DriverConfig, DecodeMode},
-    model::payload::{ClientConnect, ClientDisconnect, Speaking},
-    CoreEvent,
-    Event,
-    EventContext,
-    EventHandler as VoiceEventHandler,
-    SerenityInit,
-    Songbird,
-};
+use songbird::{CoreEvent, Event, EventContext, EventHandler as VoiceEventHandler, SerenityInit, Songbird, driver::{Config as DriverConfig, DecodeMode}, ffmpeg, model::payload::{ClientConnect, ClientDisconnect, Speaking}};
 
 
-struct Handler;
+struct Handler {
+    is_loop_running: AtomicBool,
+}
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+    }
+
+    // We use the cache_ready event just in case some cache operation is required in whatever use
+    // case you have for this.
+    async fn cache_ready(&self, ctx: Context, _guilds: Vec<GuildId>) {
+        println!("Cache built successfully!");
+
+        // it's safe to clone Context, but Arc is cheaper for this use case.
+        // Untested claim, just theoretically. :P
+        let ctx = Arc::new(ctx);
+
+        // We need to check that the loop is not already running when this event triggers,
+        // as this event triggers every time the bot enters or leaves a guild, along every time the
+        // ready shard event triggers.
+        //
+        // An AtomicBool is used because it doesn't require a mutable reference to be changed, as
+        // we don't have one due to self being an immutable reference.
+        if !self.is_loop_running.load(Ordering::Relaxed) {
+
+            // We have to clone the Arc, as it gets moved into the new thread.
+            let ctx1 = Arc::clone(&ctx);
+            // tokio::spawn creates a new green thread that can run in parallel with the rest of
+            // the application.
+            tokio::spawn(async move {
+                loop {
+                    // We clone Context again here, because Arc is owned, so it moves to the
+                    // new function.
+                    // log_system_load(Arc::clone(&ctx1)).await;
+                    // tokio::time::sleep(Duration::from_secs(120)).await;
+
+                    let manager = songbird::get(&ctx1).await
+                        .expect("Songbird Voice client placed in at initialisation.").clone();
+
+                    let guild_id = GuildId(339824391007502344);
+
+                    if let Some(handler_lock) = manager.get(guild_id) {
+                        let mut handler = handler_lock.lock().await;
+
+                        let audio_source = match ffmpeg("./ogg_bla_filetype_test_audio.ogg").await {
+                            Ok(audio_source) => audio_source,
+                            Err(why) => {
+                                println!("Err starting source: {:?}", why);
+                                return ();
+                            },
+                        };
+
+                        handler.play_source(audio_source);
+                    }
+
+                    tokio::time::sleep(Duration::from_secs(1)).await;   
+                }
+            });
+
+            // And of course, we can run more than one thread at different timings.
+            /* let ctx2 = Arc::clone(&ctx);
+            tokio::spawn(async move {
+                loop {
+                    // perform work & sleep
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                }
+            }); */
+
+            // Now that the loop is running, we set the bool to true
+            self.is_loop_running.swap(true, Ordering::Relaxed);
+        }
     }
 }
 
@@ -316,7 +374,9 @@ async fn main() {
     // Login with a bot token from the environment
     let token = env::var("DISCORD_TOKEN").expect("Expected a DISCORD_TOKEN in the environment");
     let mut client = Client::builder(token)
-        .event_handler(Handler)
+        .event_handler(Handler {
+            is_loop_running: AtomicBool::new(false),
+        })
         .framework(framework)
         .register_songbird_with(songbird.into())
         .await
