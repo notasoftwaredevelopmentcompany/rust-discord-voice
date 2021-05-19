@@ -1,6 +1,6 @@
 use tokio::sync::{RwLock};
 use serenity::prelude::TypeMapKey;
-use std::{env, fs::File, io, process::Command};
+use std::{env, fs::{self, File}, io, process::Command};
 use std::sync::Arc;
 use std::boxed::Box;
 use std::thread;
@@ -189,9 +189,16 @@ impl VoiceEventHandler for Receiver {
                                     .output()
                                     .expect("failed to execute process");
 
-                                println!("status: {}", output_of_ffmpeg.status);
-                                io::stdout().write_all(&output_of_ffmpeg.stdout).unwrap();
+                                // println!("status: {}", output_of_ffmpeg.status);
+                                // io::stdout().write_all(&output_of_ffmpeg.stdout).unwrap();
                                 io::stderr().write_all(&output_of_ffmpeg.stderr).unwrap();
+
+                                // Delete the original raw opus file from disk
+                                let remove_file_result = fs::remove_file(format!("output_{}.opus", uuid));
+                                match remove_file_result {
+                                    Ok(v) => println!("The raw opus file: {} was successfully removed", format!("output_{}.opus", uuid)),
+                                    Err(e) => println!("Unable to remove the raw opus file: {}", format!("output_{}.opus", uuid)),
+                                }
                             });
                             
                             // Reset the users decoded_audio
