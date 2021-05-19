@@ -172,10 +172,17 @@ impl VoiceEventHandler for Receiver {
                             let mut f = File::create("output.ogg").expect("Unable to create ogg file");
                             let decoded_audio = user_entry.decoded_audio.clone();
 
-                            for i in decoded_audio { 
-                                write!(f, "{}", i);
-                            }
-                            
+                            thread::spawn(move || {
+                                println!("[New thread]: writing decoded_audio to file");
+                                for i in decoded_audio { 
+                                    let result = write!(f, "{}", i);
+                                    match result {
+                                        Ok(v) => (),
+                                        Err(e) => println!("[New thread]: Error writing audio to file: {:?}", e),
+                                    }
+                                }
+                                println!("[New thread]: File written successfully!");
+                            });
                             
                             // Reset the users decoded_audio
                             let mut decoded_audio_length: usize = user_entry.decoded_audio.len();
