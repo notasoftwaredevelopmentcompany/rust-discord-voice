@@ -478,7 +478,7 @@ impl VoiceEventHandler for TrackEndNotifier {
                     .await,
             ); */
 
-            // Remove the ogg file from disk
+            // Get file name and created time for all ogg files
             let mut files_with_created_time = HashMap::<String, SystemTime>::new();
 
             for temp_audio_file in globwalk::glob("*.ogg").unwrap() {
@@ -506,6 +506,7 @@ impl VoiceEventHandler for TrackEndNotifier {
                 }
             }
 
+            // Remove the oldest_file ogg file from disk
             if !oldest_file.is_empty() {
                 let file_path = &*oldest_file.keys().next().unwrap();
                 let remove_file_result = fs::remove_file(file_path);
