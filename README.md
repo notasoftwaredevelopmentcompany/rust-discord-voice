@@ -11,7 +11,7 @@ Or just Docker, the project is setup with a Docker development container.
 `cargo run`
 
 ## Production
-Todo...
+`docker-compose up -d --build`
 
 
 ## Functionality
