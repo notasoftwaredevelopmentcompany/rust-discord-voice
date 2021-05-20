@@ -1,0 +1,18 @@
+version: "3.7"
+services:
+    rust-discord-voice:
+        container_name: "rust-discord-voice"
+        build:
+            context: .
+            dockerfile: Dockerfile
+        volumes:
+            - rust-discord-voice-volume:/usr/src/rust-discord-voice
+        environment:
+            - DISCORD_TOKEN=${DISCORD_TOKEN}
+            - GUILD_ID=${GUILD_ID}
+            - PREFIX=${PREFIX}
+          
+        restart: always
+
+volumes: 
+    rust-discord-voice-volume:
