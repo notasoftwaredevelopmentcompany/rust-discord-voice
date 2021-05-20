@@ -29,6 +29,18 @@ use serenity::{
 use songbird::{CoreEvent, Event, EventContext, EventHandler as VoiceEventHandler, SerenityInit, Songbird, driver::{Config as DriverConfig, DecodeMode}, ffmpeg, model::payload::{ClientConnect, ClientDisconnect, Speaking}};
 
 
+pub fn cleanup_temp_audio_files() {
+    for temp_audio_file in globwalk::glob("*.{ogg,opus}").unwrap() {
+        if let Ok(temp_audio_file) = temp_audio_file {
+            let remove_file_result = fs::remove_file(temp_audio_file.path());
+            match remove_file_result {
+                Ok(_v) => (),
+                Err(e) => println!("Unable to remove file: {}", e),
+            }
+        }
+    }
+}
+
 struct Handler {
     is_loop_running: AtomicBool,
 }
@@ -37,6 +49,7 @@ struct Handler {
 impl EventHandler for Handler {
     async fn ready(&self, _: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
+        cleanup_temp_audio_files();
     }
 
     // We use the cache_ready event just in case some cache operation is required in whatever use
@@ -70,7 +83,7 @@ impl EventHandler for Handler {
                     let manager = songbird::get(&ctx1).await
                         .expect("Songbird Voice client placed in at initialisation.").clone();
 
-                    let guild_id = GuildId(339824391007502344);
+                    let guild_id = GuildId(339824391007502344); // @TODO
 
 
                     // Read from the global data storage UserVoiceDataVector to see if there are any .ogg files to play?
@@ -99,15 +112,14 @@ impl EventHandler for Handler {
                                 };
         
                                 handler.play_source(audio_source);
+                                
+                                // Remove the first vector item
+                                user_voice_data.remove(0);
                             }
                         };
-
-                        // Remove the first vector item
-                        user_voice_data.remove(0);
-
                     }
 
-                    tokio::time::sleep(Duration::from_secs(2)).await;   
+                    tokio::time::sleep(Duration::from_millis(500)).await;   
                 }
             });
 
@@ -128,8 +140,6 @@ impl EventHandler for Handler {
 
 
 struct Receiver {
-    // user_voice_data: &'a mut Vec<UserVoiceData>,
-    // call_lock: Weak<Mutex<Call>>,
     context: Context,
 }
 
@@ -270,7 +280,7 @@ impl VoiceEventHandler for Receiver {
                                     .arg("-f")
                                     .arg("s16le")
                                     .arg("-ar")
-                                    .arg("48k")
+                                    .arg("36k") // @TODO: 48k
                                     .arg("-ac")
                                     .arg("2")
                                     .arg("-i")
@@ -281,7 +291,7 @@ impl VoiceEventHandler for Receiver {
 
                                 // println!("status: {}", output_of_ffmpeg.status);
                                 // io::stdout().write_all(&output_of_ffmpeg.stdout).unwrap();
-                                io::stderr().write_all(&output_of_ffmpeg.stderr).unwrap();
+                                // io::stderr().write_all(&output_of_ffmpeg.stderr).unwrap();
 
                                 // Delete the original raw opus file from disk
                                 let remove_file_result = fs::remove_file(format!("output_{}.opus", &uuid));
