@@ -1,10 +1,10 @@
-use tokio::sync::{RwLock};
-use serenity::{http::Http, model::id::GuildId, prelude::{TypeMapKey}};
-use std::{env, fs::{self, File}, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::Duration};
+use tokio::sync::RwLock;
+use serenity::{http::Http, model::id::GuildId, prelude::TypeMapKey};
+use std::{collections::HashMap, env, ffi::{OsString}, fs::{self, File}, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::{Duration, SystemTime}};
 use std::sync::Arc;
 use std::boxed::Box;
 use std::thread;
-use std::io::{Write};
+use std::io::Write;
 use uuid::Uuid;
 
 use serenity::{
@@ -26,7 +26,7 @@ use serenity::{
     Result as SerenityResult,
 };
 
-use songbird::{CoreEvent, Event, EventContext, EventHandler as VoiceEventHandler, SerenityInit, Songbird, TrackEvent, driver::{Config as DriverConfig, DecodeMode}, ffmpeg, model::payload::{ClientConnect, ClientDisconnect, Speaking}};
+use songbird::{CoreEvent, Event, EventContext, EventHandler as VoiceEventHandler, SerenityInit, Songbird, TrackEvent, driver::{Config as DriverConfig, DecodeMode}, ffmpeg, input::Input, model::payload::{ClientConnect, ClientDisconnect, Speaking}};
 
 
 pub fn cleanup_temp_audio_files() {
@@ -83,7 +83,7 @@ impl EventHandler for Handler {
                     let manager = songbird::get(&ctx1).await
                         .expect("Songbird Voice client placed in at initialisation.").clone();
 
-                    let guild_id = GuildId(339824391007502344); // @TODO: use the global storage in main?
+                    let guild_id = GuildId(339824391007502344); // @TODO: @HARCODED use the global storage in main?
 
 
                     // Read from the global data storage UserVoiceDataVector to see if there are any .ogg files to play?
@@ -98,20 +98,16 @@ impl EventHandler for Handler {
                         if let Some(first_item) = user_voice_data.first() {
                             if let Some(handler_lock) = manager.get(guild_id) {
                                 let mut handler = handler_lock.lock().await;
-        
-                                // let audio_source = match ffmpeg("./ogg_bla_filetype_test_audio.ogg").await {
-
-                                // let first_copy = first_item.clone();
                                 let file_path = &first_item.file_path;
-                                let audio_source = match ffmpeg(file_path).await {
+
+                                let audio_source: Input = match ffmpeg(file_path).await {
                                     Ok(audio_source) => audio_source,
                                     Err(why) => {
                                         println!("Err starting source: {:?}", why);
                                         return ();
                                     },
                                 };
-        
-                                // handler.play_source(audio_source);
+
                                 handler.enqueue_source(audio_source.into());
                                 
                                 // Remove the first vector item
@@ -120,7 +116,7 @@ impl EventHandler for Handler {
                         };
                     }
 
-                    tokio::time::sleep(Duration::from_millis(1000)).await;   
+                    tokio::time::sleep(Duration::from_millis(2000)).await;   
                 }
             });
 
@@ -261,7 +257,7 @@ impl VoiceEventHandler for Receiver {
                             
                             thread::spawn(move || {
                                 {
-                                    let mut raw_output_file = File::create(raw_file_name).expect("Unable to create opus file");
+                                    let mut raw_output_file = File::create(raw_file_name).expect("Unable to create raw opus file");
     
                                     println!("[New thread]: writing decoded_audio to file");
                                     for i in decoded_audio { 
@@ -281,7 +277,7 @@ impl VoiceEventHandler for Receiver {
                                     .arg("-f")
                                     .arg("s16le")
                                     .arg("-ar")
-                                    .arg("36k") // @TODO: 48k
+                                    .arg("32k") // @TODO: 48k
                                     .arg("-ac")
                                     .arg("2")
                                     .arg("-i")
@@ -468,19 +464,56 @@ async fn main() {
 }
 
 struct TrackEndNotifier {
-    chan_id: ChannelId,
-    http: Arc<Http>,
+    _chan_id: ChannelId,
+    _http: Arc<Http>,
 }
 
 #[async_trait]
 impl VoiceEventHandler for TrackEndNotifier {
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
-        if let EventContext::Track(track_list) = ctx {
-            check_msg(
-                self.chan_id
+        if let EventContext::Track(_track_list) = ctx {
+            /* check_msg(
+                self.chan_id-
                     .say(&self.http, &format!("Tracks ended: {}.", track_list.len()))
                     .await,
-            );
+            ); */
+
+            // Remove the ogg file from disk
+            let mut files_with_created_time = HashMap::<String, SystemTime>::new();
+
+            for temp_audio_file in globwalk::glob("*.ogg").unwrap() {
+                if let Ok(temp_audio_file) = temp_audio_file {
+                    let metadata = temp_audio_file.metadata().unwrap();
+                    let created_time = metadata.created();
+                    let file_name = OsString::from(temp_audio_file.file_name());
+
+                    files_with_created_time.insert(file_name.into_string().unwrap(), created_time.unwrap());
+                }
+            }
+
+            // Get the oldest .ogg file
+            let mut oldest_file = HashMap::<String, SystemTime>::new();
+            for (key, value) in files_with_created_time {
+                if oldest_file.is_empty() {
+                    oldest_file.insert(key, value);
+                    continue;
+                }
+
+                // Is this file older than the oldest_file?
+                if value < *oldest_file.values().next().unwrap() {
+                    oldest_file.clear();
+                    oldest_file.insert(key, value);
+                }
+            }
+
+            if !oldest_file.is_empty() {
+                let file_path = &*oldest_file.keys().next().unwrap();
+                let remove_file_result = fs::remove_file(file_path);
+                match remove_file_result {
+                    Ok(_v) => (),
+                    Err(e) => println!("Unable to remove file: {}", e),
+                }
+            }
         }
 
         None
@@ -518,8 +551,8 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         handler.add_global_event(
             Event::Track(TrackEvent::End),
             TrackEndNotifier {
-                chan_id,
-                http: send_http,
+                _chan_id: chan_id,
+                _http: send_http,
             },
         );
 
