@@ -1,6 +1,6 @@
 use tokio::sync::{RwLock};
-use serenity::{model::id::GuildId, prelude::{TypeMapKey}};
-use std::{env, fs::{self, File}, io, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::Duration};
+use serenity::{http::Http, model::id::GuildId, prelude::{TypeMapKey}};
+use std::{env, fs::{self, File}, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::Duration};
 use std::sync::Arc;
 use std::boxed::Box;
 use std::thread;
@@ -26,7 +26,7 @@ use serenity::{
     Result as SerenityResult,
 };
 
-use songbird::{CoreEvent, Event, EventContext, EventHandler as VoiceEventHandler, SerenityInit, Songbird, driver::{Config as DriverConfig, DecodeMode}, ffmpeg, model::payload::{ClientConnect, ClientDisconnect, Speaking}};
+use songbird::{CoreEvent, Event, EventContext, EventHandler as VoiceEventHandler, SerenityInit, Songbird, TrackEvent, driver::{Config as DriverConfig, DecodeMode}, ffmpeg, model::payload::{ClientConnect, ClientDisconnect, Speaking}};
 
 
 pub fn cleanup_temp_audio_files() {
@@ -83,7 +83,7 @@ impl EventHandler for Handler {
                     let manager = songbird::get(&ctx1).await
                         .expect("Songbird Voice client placed in at initialisation.").clone();
 
-                    let guild_id = GuildId(339824391007502344); // @TODO
+                    let guild_id = GuildId(339824391007502344); // @TODO: use the global storage in main?
 
 
                     // Read from the global data storage UserVoiceDataVector to see if there are any .ogg files to play?
@@ -111,7 +111,8 @@ impl EventHandler for Handler {
                                     },
                                 };
         
-                                handler.play_source(audio_source);
+                                // handler.play_source(audio_source);
+                                handler.enqueue_source(audio_source.into());
                                 
                                 // Remove the first vector item
                                 user_voice_data.remove(0);
@@ -119,7 +120,7 @@ impl EventHandler for Handler {
                         };
                     }
 
-                    tokio::time::sleep(Duration::from_millis(500)).await;   
+                    tokio::time::sleep(Duration::from_millis(1000)).await;   
                 }
             });
 
@@ -466,6 +467,27 @@ async fn main() {
     }
 }
 
+struct TrackEndNotifier {
+    chan_id: ChannelId,
+    http: Arc<Http>,
+}
+
+#[async_trait]
+impl VoiceEventHandler for TrackEndNotifier {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        if let EventContext::Track(track_list) = ctx {
+            check_msg(
+                self.chan_id
+                    .say(&self.http, &format!("Tracks ended: {}.", track_list.len()))
+                    .await,
+            );
+        }
+
+        None
+    }
+}
+
+
 #[command]
 #[only_in(guilds)]
 async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
@@ -480,6 +502,8 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
 
     let guild = msg.guild(&ctx.cache).await.unwrap();
     let guild_id = guild.id;
+    let chan_id = msg.channel_id;
+    let send_http = ctx.http.clone();
 
     let manager = songbird::get(ctx).await
         .expect("Songbird Voice client placed in at initialisation.").clone();
@@ -490,6 +514,15 @@ async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     if let Ok(_) = conn_result {
         // NOTE: this skips listening for the actual connection result.
         let mut handler = handler_lock.lock().await;
+
+        handler.add_global_event(
+            Event::Track(TrackEvent::End),
+            TrackEndNotifier {
+                chan_id,
+                http: send_http,
+            },
+        );
+
 
         let context_clone = ctx.clone();
         handler.add_global_event(
