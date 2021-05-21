@@ -83,8 +83,7 @@ impl EventHandler for Handler {
                     let manager = songbird::get(&ctx1).await
                         .expect("Songbird Voice client placed in at initialisation.").clone();
 
-                    let guild_id = GuildId(339824391007502344); // @TODO: @HARCODED use the global storage in main?
-
+                    let guild_id: GuildId = *_guilds.first().unwrap();
 
                     // Read from the global data storage UserVoiceDataVector to see if there are any .ogg files to play?
                     let data_lock = {
