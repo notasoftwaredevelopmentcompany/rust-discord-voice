@@ -276,7 +276,7 @@ impl VoiceEventHandler for Receiver {
                                     .arg("-f")
                                     .arg("s16le")
                                     .arg("-ar")
-                                    .arg("32k") // @NOTE: the correct value is: 48k
+                                    .arg("36k") // @NOTE: the correct value is: 48k
                                     .arg("-ac")
                                     .arg("2")
                                     .arg("-i")
