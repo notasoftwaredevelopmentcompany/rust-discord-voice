@@ -1,6 +1,6 @@
 use tokio::sync::RwLock;
-use serenity::{http::Http, model::id::{GuildId, UserId}, prelude::TypeMapKey};
-use std::{collections::HashMap, env, ffi::{OsString}, fs::{self, File}, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::{Duration, SystemTime}};
+use serenity::{framework::standard::{CommandGroup, HelpOptions, help_commands::{self, plain}, macros::help}, http::Http, model::id::{GuildId, UserId}, prelude::TypeMapKey};
+use std::{collections::{HashMap, HashSet}, env, ffi::{OsString}, fs::{self, File}, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::{Duration, SystemTime}};
 use std::sync::Arc;
 use std::boxed::Box;
 use std::thread;
@@ -400,10 +400,34 @@ impl VoiceEventHandler for Receiver {
     }
 }
 
+// The framework provides two built-in help commands for you to use.
+// But you can also make your own customized help command that forwards
+// to the behaviour of either of them.
+#[help]
+#[individual_command_tip =
+"Hi!\n"]
+// Some arguments require a `{}` in order to replace it with contextual information.
+// In this case our `{}` refers to a command's name.
+// Define the maximum Levenshtein-distance between a searched command-name
+// and commands. If the distance is lower than or equal the set distance,
+// it will be displayed as a suggestion.
+// Setting the distance to 0 will disable suggestions.
+#[max_levenshtein_distance(3)]
+async fn my_help(
+    context: &Context,
+    msg: &Message,
+    args: Args,
+    help_options: &'static HelpOptions,
+    groups: &[&'static CommandGroup],
+    owners: HashSet<UserId>
+) -> CommandResult {
+    let _ = plain(context, msg, args, &help_options, groups, owners).await;
+    Ok(())
+}
+
 #[group]
 #[commands(join, leave, ping)]
 struct General;
-
 
 #[tokio::main]
 async fn main() {
@@ -412,7 +436,10 @@ async fn main() {
     let prefix = env::var("PREFIX").expect("Expected a PREFIX in the environment");
 
     let framework = StandardFramework::new()
-        .configure(|c| c.prefix(&prefix))
+        .configure(|c| c
+            .with_whitespace(true)
+            .prefix(&prefix))
+        .help(&MY_HELP)
         .group(&GENERAL_GROUP);
     
     // Here, we need to configure Songbird to decode all incoming voice packets.
