@@ -1,5 +1,5 @@
 use tokio::sync::RwLock;
-use serenity::{http::Http, model::id::GuildId, prelude::TypeMapKey};
+use serenity::{http::Http, model::id::{GuildId, UserId}, prelude::TypeMapKey};
 use std::{collections::HashMap, env, ffi::{OsString}, fs::{self, File}, process::Command, sync::atomic::AtomicBool, sync::atomic::Ordering, time::{Duration, SystemTime}};
 use std::sync::Arc;
 use std::boxed::Box;
@@ -276,7 +276,7 @@ impl VoiceEventHandler for Receiver {
                                     .arg("-f")
                                     .arg("s16le")
                                     .arg("-ar")
-                                    .arg("32k") // @TODO: 48k
+                                    .arg("32k") // @NOTE: the correct value is: 48k
                                     .arg("-ac")
                                     .arg("2")
                                     .arg("-i")
@@ -523,15 +523,20 @@ impl VoiceEventHandler for TrackEndNotifier {
 
 #[command]
 #[only_in(guilds)]
-async fn join(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-    let connect_to = match args.single::<u64>() {
+async fn join(ctx: &Context, msg: &Message, mut _args: Args) -> CommandResult {
+    // Instead of connecting to a channel specified in the message args
+    /* let connect_to = match args.single::<u64>() {
         Ok(id) => ChannelId(id),
         Err(_) => {
             check_msg(msg.reply(ctx, "Requires a valid voice channel ID be given").await);
 
             return Ok(());
         },
-    };
+    }; */
+
+    // The bot connects to a predefined voice channel
+    let voice_channel_id: String = env::var("VOICE_CHANNEL_ID").expect("Expected a VOICE_CHANNEL_ID in the environment");
+    let connect_to = ChannelId(voice_channel_id.parse::<u64>().unwrap());
 
     let guild = msg.guild(&ctx.cache).await.unwrap();
     let guild_id = guild.id;
